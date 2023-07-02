@@ -2,7 +2,7 @@ import torch.nn as nn
 import torch
 import numpy as np
 import pdb
-import  matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 
 
 class CNN(nn.Module):
@@ -97,7 +97,7 @@ class MLP(nn.Module):
 
 class RNN(nn.Module):
     def __init__(self, hidden_layer_size: int = 100, input_size: int = 50,
-                 tau: float = .15,
+                 tau: float = .15, position_size: int = 2,
                  dt: float = 0.01, non_linearity: nn.functional = None, grid_width: int = 10,
                  min_g: float = 0.5, max_g: float = 2):
         super().__init__()
@@ -128,7 +128,7 @@ class RNN(nn.Module):
     def forward(self, u):
         """
 
-        :param u: [batch, inputs]
+        :param u: target info [batch, inputs]
         :return: [batch, outputs]
         """
         x = self.x + self.dt / self.tau * (
