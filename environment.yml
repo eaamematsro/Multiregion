@@ -1,0 +1,22 @@
+name: MultiArea
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - scikit-learn
+  - matplotlib
+  - numpy
+  - scikit-learn-intelex
+  - seaborn
+  - plotly
+  - pytorch
+  - imageio
+  - torchvision
+  - cudatoolkit=11.1
+  - tqdm
+  - alive-progress
+  - icecream
+  - jupyter
+  - ffmpeg
+prefix: /home/elom/anaconda3/envs/MultiArea
