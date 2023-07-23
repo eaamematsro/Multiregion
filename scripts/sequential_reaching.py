@@ -6,9 +6,10 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from networks import (RNN, CNN, MLP, SequentialReachingNetwork)
-from losses import DistanceLoss
 from matplotlib.animation import FuncAnimation
-from IPython import display
+from sklearn.decomposition import PCA
+
+# TODO: Check if regions have different abstraction levels
 
 
 class Network(SequentialReachingNetwork):
@@ -100,14 +101,15 @@ class Network(SequentialReachingNetwork):
         if self.draw_colorbar:
             plt.colorbar(im, label='Activity')
             self.draw_colorbar = False
-        def AnimationFunction(time):
+
+        def animation_function(time):
             im.set_array(imaged_activity[time])
             tj.set_data(position[:time, 0], position[:time, 0])
             return im, tj
 
         anim = FuncAnimation(
             fig,
-            AnimationFunction,
+            animation_function,
             frames=activity.shape[0],
             interval=1000/fps,
             blit=False
@@ -116,61 +118,49 @@ class Network(SequentialReachingNetwork):
         self.ani = anim
         plt.pause(15)
 
-    def test_sensitivity(self, samples: int = 100):
+    def test_sensitivity(self, samples: int = 10):
+        grid_width = self.rnn.grid_width
         constant = []
         vars = []
         position = self.max_bound / 2 * torch.ones(samples, 2)
         plt.close('all')
-        for reach in range(self.reaches):
-            targets = self.sample_targets(batch_size=samples)
-            targets[:, reach] = targets[0, reach]
-            self.get_reach_number(targets, position, reset=True)
-            target = targets.reshape(targets.shape[0], -1) / self.max_bound
-            trigger_sig = self.get_trigger_signal(targets, position)
-            reach_nums = (torch.from_numpy(self.reach_num.astype(np.float32))[:, None]).to(self.device)
-            input = torch.hstack([target, position / self.max_bound, trigger_sig[:, None], reach_nums])
-            with torch.no_grad():
-                rnn_input = self.model_inputs(input).cpu().numpy()
-            vars.append((rnn_input.var(axis=0)).mean())
-            constant.append(reach)
-
-        ## Vary trigger sig
+        # for reach in range(self.reaches):
+        reach = 0
         targets = self.sample_targets(batch_size=samples)
-        for reach in range(self.reaches):
-            targets[:, reach] = targets[0, 0]
-        self.get_reach_number(targets, position, reset=True)
-        target = targets.reshape(targets.shape[0], -1) / self.max_bound
-        trigger_sig = torch.linspace(0, 1, samples)
-        reach_nums = (torch.from_numpy(self.reach_num.astype(np.float32))[:, None]).to(self.device)
-        input = torch.hstack([target, position / self.max_bound, trigger_sig[:, None], reach_nums])
+        targets[:, reach] = targets[0, reach]
         with torch.no_grad():
-            rnn_input = self.model_inputs(input).cpu().numpy()
-        vars.append((rnn_input.var(axis=0)).mean())
-        constant.append(self.reaches)
+            positions, rnn_activation = self.forward(targets, noise_scale=0)
+        activity = rnn_activation.squeeze().cpu().numpy()
+        position = positions.squeeze().cpu().numpy()
+        nrows = np.ceil(activity.shape[2] / grid_width).astype(int)
+        imaged_activity = np.zeros((activity.shape[0], samples, nrows, grid_width))
+        for neu_idx in range(activity.shape[2]):
+            col_idx = neu_idx % grid_width
+            row_idx = neu_idx // grid_width
+            imaged_activity[:, :, row_idx, col_idx] = activity[:, :, neu_idx]
 
-        ## Vary reach signal
-        targets = self.sample_targets(batch_size=samples)
-        for reach in range(self.reaches):
-            targets[:, reach] = targets[0, 0]
-        self.get_reach_number(targets, position, reset=True)
-        target = targets.reshape(targets.shape[0], -1) / self.max_bound
-        trigger_sig = self.get_trigger_signal(targets, position)
-        reach_nums = torch.linspace(0, self.reaches, samples).to(self.device)[:, None]
-        input = torch.hstack([target, position / self.max_bound, trigger_sig[:, None], reach_nums])
-        with torch.no_grad():
-            rnn_input = self.model_inputs(input).cpu().numpy()
-        vars.append((rnn_input.var(axis=0)).mean())
-        constant.append(self.reaches + 1)
+        pcs = np.zeros((grid_width, int(samples * imaged_activity.shape[0] / 2), 3))
+        duration = int(imaged_activity.shape[0] / 2)
+        for region in range(grid_width):
+            region_activity = np.swapaxes(
+                imaged_activity[:int(imaged_activity.shape[0] / 2), :, :, region], 0, -1
+            )
+            flattened_activity = region_activity.reshape(region_activity.shape[0], -1)
+            pca = PCA(n_components=3)
+            pcs[region] = pca.fit_transform(flattened_activity.T)
 
-        targ_labels = [f"Target {i+1}" for i in range(self.reaches)]
-        labels = targ_labels + ['All Targets & Reach number', 'All Targets & trigger']
-        plt.figure()
-        plt.scatter(constant, vars)
-        plt.xlabel('Constant Input')
-        plt.ylabel('Mean variance')
-        plt.xticks(ticks=np.arange(len(constant)), labels=labels, rotation=90)
-        plt.pause(0.1)
+        fig, ax = plt.subplots(1, grid_width, figsize=(5 * grid_width, 10))
+        for region, axis in zip(range(grid_width), ax):
+            axis.set_title(f"Region {region}")
+            for sample in range(samples):
+                axis.plot(pcs[region, sample * duration: (sample + 1) * duration, 0],
+                                pcs[region, sample * duration: (sample + 1) * duration, 1])
 
+        fig.tight_layout()
+        for axis in ax:
+            axis.set_xlabel('PC 1')
+            axis.set_ylabel('PC 2')
+        plt.pause(1)
     def make_fig_layout(self):
         self.fig, self.ax = plt.subplots(1, 4, figsize=(25, 12))
         self.draw_colorbar = True
@@ -206,7 +196,7 @@ def main(gpu: int = 0):
     model.to(device)
     model.burn_in(n_loops=100)
     model.fit(eps=1e-1)
-    # model.test_sensitivity()
+    model.test_sensitivity()
     model.evaluate_network()
     model.plot_activity()
     pdb.set_trace()
