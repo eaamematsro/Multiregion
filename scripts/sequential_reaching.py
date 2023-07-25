@@ -13,7 +13,7 @@ from sklearn.decomposition import PCA
 
 
 class Network(SequentialReachingNetwork):
-    def __init__(self, duration: int = 300, n_clusters: int = 2, n_reaches: int = 2, use_cnn: bool = False,
+    def __init__(self, duration: int = 300, n_clusters: int = 3, n_reaches: int = 2, use_cnn: bool = False,
                  device: torch.device = None, load_cnn: bool = False, base_lr: float = 1e-3,
                  control_type: str = 'acceleration',
                  wd: float = 1e-4, n_hidden: int = 250, **kwargs):
@@ -118,16 +118,25 @@ class Network(SequentialReachingNetwork):
         self.ani = anim
         plt.pause(15)
 
-    def test_sensitivity(self, samples: int = 10):
+    def test_sensitivity(self, samples: int = 10, cmap: mpl.cm.ScalarMappable = None,
+                         plot_3d: bool = True):
+
+        if cmap is None:
+            cmap = mpl.cm.plasma
+
+        normalization = mpl.colors.Normalize(vmin=0, vmax=samples)
         grid_width = self.rnn.grid_width
-        constant = []
-        vars = []
         position = self.max_bound / 2 * torch.ones(samples, 2)
-        plt.close('all')
         # for reach in range(self.reaches):
         reach = 0
         targets = self.sample_targets(batch_size=samples)
         targets[:, reach] = targets[0, reach]
+        sorted_probs = np.argsort(self.probs)
+        sorted_probs = np.flip(sorted_probs)
+        for sample in range(samples):
+            target = sorted_probs[sample]
+            targets[sample, 1:] = target * torch.ones((self.reaches - 1)) / 100
+
         with torch.no_grad():
             positions, rnn_activation = self.forward(targets, noise_scale=0)
         activity = rnn_activation.squeeze().cpu().numpy()
@@ -149,18 +158,38 @@ class Network(SequentialReachingNetwork):
             pca = PCA(n_components=3)
             pcs[region] = pca.fit_transform(flattened_activity.T)
 
-        fig, ax = plt.subplots(1, grid_width, figsize=(5 * grid_width, 10))
+        if plot_3d:
+            fig, ax = plt.subplots(1, grid_width, figsize=(5 * grid_width, 5),
+                                   subplot_kw={"projection": "3d"})
+        else:
+            fig, ax = plt.subplots(1, grid_width, figsize=(5 * grid_width, 5))
+
         for region, axis in zip(range(grid_width), ax):
             axis.set_title(f"Region {region}")
             for sample in range(samples):
-                axis.plot(pcs[region, sample * duration: (sample + 1) * duration, 0],
-                                pcs[region, sample * duration: (sample + 1) * duration, 1])
+                if plot_3d:
+                    axis.scatter(pcs[region, sample * duration, 0], pcs[region, sample * duration, 1],
+                                 pcs[region, sample * duration, 2],
+                                 color=cmap(normalization(sample)))
+                    axis.plot(pcs[region, sample * duration: (sample + 1) * duration, 0],
+                                    pcs[region, sample * duration: (sample + 1) * duration, 1],
+                              pcs[region, sample * duration: (sample + 1) * duration, 2],
+                              color=cmap(normalization(sample)))
+                else:
+                    axis.scatter(pcs[region, sample * duration, 0], pcs[region, sample * duration, 1],
+                                 color=cmap(normalization(sample)))
+                    axis.plot(pcs[region, sample * duration: (sample + 1) * duration, 0],
+                              pcs[region, sample * duration: (sample + 1) * duration, 1],
+                              color=cmap(normalization(sample)))
 
         fig.tight_layout()
         for axis in ax:
             axis.set_xlabel('PC 1')
             axis.set_ylabel('PC 2')
+            if plot_3d:
+                axis.set_zlabel('PC 3')
         plt.pause(1)
+
     def make_fig_layout(self):
         self.fig, self.ax = plt.subplots(1, 4, figsize=(25, 12))
         self.draw_colorbar = True
@@ -193,8 +222,9 @@ def main(gpu: int = 0):
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = Network(device=device, max_speed=2)
+
     model.to(device)
-    model.burn_in(n_loops=100)
+    # model.burn_in(n_loops=100)
     model.fit(eps=1e-1)
     model.test_sensitivity()
     model.evaluate_network()
