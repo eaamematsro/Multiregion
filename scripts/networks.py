@@ -675,7 +675,7 @@ class SequentialReachingNetwork(nn.Module):
         self.set_logger()
 
     def set_logger(self):
-        logging_path = self.save_path.parents[0] / 'log.txt'
+        logging_path = self.save_path.parents[0] / 'log.log'
         logging.basicConfig(
             filename=logging_path,
             filemode='a',
@@ -1014,7 +1014,7 @@ class SequentialReachingNetwork(nn.Module):
     def save_model(self):
         state_dict = self.state_dict()
         data_dict = {'model_state': state_dict, 'full_model': self}
-
+        logging.shutdown()
         with open(self.save_path, 'wb') as handle:
             pickle.dump(data_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -1030,7 +1030,7 @@ class SequentialReachingNetwork(nn.Module):
         check_path = path / 'checkpoint_model.pickle'
         with open(check_path, 'wb') as handle:
             pickle.dump(data_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        pdb.set_trace()
+        logging.info(f'Saving model at checkpoint {checkpoint}')
 
     def set_savepath(self):
         cwd = os.getcwd()

@@ -115,7 +115,6 @@ class Network(SequentialReachingNetwork):
             blit=False
         )
 
-        self.ani = anim
         plt.pause(15)
 
     def test_sensitivity(self, samples: int = 10, cmap: mpl.cm.ScalarMappable = None,
@@ -221,11 +220,15 @@ def main(gpu: int = 0):
         device = torch.device(f"cuda:{0}" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Network(device=device, max_speed=2)
 
-    model.to(device)
-    # model.burn_in(n_loops=100)
-    model.fit(eps=1e-1)
+    samples = 10
+    for sample in range(samples):
+        plt.close('all')
+        model = Network(device=device, max_speed=2)
+        model.to(device)
+        model.burn_in(n_loops=100)
+        model.fit(eps=1e-1)
+        model.save_model()
     model.test_sensitivity()
     model.evaluate_network()
     model.plot_activity()

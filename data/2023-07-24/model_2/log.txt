@@ -1,2 +1,0 @@
-20:29:38,375 root INFO Initializing model
-20:29:41,316 root INFO Iteration 0: Loss: 38.274107933044434
