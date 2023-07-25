@@ -195,21 +195,6 @@ class Network(SequentialReachingNetwork):
         # fig, ax = plt.subplots(1, 2, figsize=(30, 12))
         # self.ani_fig = (fig, ax)
 
-    def reset_optimizer(self):
-        self.Loss = []
-        if self.load_cnn:
-            self.optimizer = torch.optim.AdamW(
-                [
-                    {'params': self.rnn.parameters()},
-                    {'params': self.model_inputs.parameters(), 'lr': 1e-1 * self.opt_config['lr']}
-                ], lr=self.opt_config['lr'], weight_decay=self.opt_config['wd']
-            )
-
-        else:
-            self.optimizer = torch.optim.AdamW(
-                self.parameters(), lr=self.opt_config['lr'], weight_decay=self.opt_config['wd']
-            )
-
 
 def main(gpu: int = 0):
     if torch.cuda.is_available():
