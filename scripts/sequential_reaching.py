@@ -6,7 +6,7 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from networks import (RNN, CNN, MLP, SequentialReachingNetwork)
-from matplotlib.animation import FuncAnimation
+from matplotlib.animation import FuncAnimation, PillowWriter
 from sklearn.decomposition import PCA
 
 # TODO: Check if regions have different abstraction levels
@@ -114,8 +114,11 @@ class Network(SequentialReachingNetwork):
             interval=1000/fps,
             blit=False
         )
-
+        handle = self.save_path.parents[0] / 'animation.gif'
+        FFwriter = PillowWriter(fps=fps)
+        anim.save(handle, writer=FFwriter)
         plt.pause(15)
+        # pdb.set_trace()
 
     def test_sensitivity(self, samples: int = 10, cmap: mpl.cm.ScalarMappable = None,
                          plot_3d: bool = True):
@@ -195,6 +198,37 @@ class Network(SequentialReachingNetwork):
         # fig, ax = plt.subplots(1, 2, figsize=(30, 12))
         # self.ani_fig = (fig, ax)
 
+    def evaluate_contribution(self, cmap: mpl.cm.ScalarMappable = None,):
+
+        if cmap is None:
+            cmap = mpl.cm.plasma
+
+        grid_width = self.rnn.grid_width
+        position = self.max_bound / 2 * torch.ones(1, 2)
+        targets = self.sample_targets(batch_size=1)
+
+        mask = torch.ones(self.rnn.J.shape[0])
+        with torch.no_grad():
+            original_position, _ = self.forward(targets, noise_scale=0, mask=mask)
+
+        position_store = []
+        normalization = mpl.colors.Normalize(vmin=0, vmax=grid_width)
+
+        for idx in range(grid_width):
+            for n_idx in range(self.rnn.J.shape[0]):
+                if n_idx % grid_width == idx:
+                    mask[n_idx] = 0
+            with torch.no_grad():
+                positions, rnn_activation = self.forward(targets, noise_scale=0, mask=mask)
+            position_store.append(positions)
+        fig, ax = plt.subplots(1, 2)
+
+        for idx, position in enumerate(position_store):
+            ax[0].plot(position[:, 0, 0], color=cmap(normalization(idx)))
+            ax[1].scatter(idx, ((position - original_position)**2).sum())
+        ax[1].set_xlabel('Removed regions')
+        ax[1].set_yscale('log')
+        plt.show()
 
 def main(gpu: int = 0):
     if torch.cuda.is_available():
@@ -205,11 +239,11 @@ def main(gpu: int = 0):
         device = torch.device(f"cuda:{0}" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
     samples = 10
-    for sample in range(samples):
+    decay = np.logspace(-5, -2, samples, base=10)
+    for sample, wd in zip(range(samples), decay):
         plt.close('all')
-        model = Network(device=device, max_speed=2)
+        model = Network(device=device, max_speed=2, wd=wd)
         model.to(device)
         model.burn_in(n_loops=100)
         model.fit(eps=1e-1)

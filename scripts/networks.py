@@ -181,10 +181,14 @@ class RNN(nn.Module):
         self.x = torch.randn((batch_size, self.n)) / torch.sqrt(torch.tensor(self.n))
         self.r = self.non_linearity(self.x)
 
-    def forward(self, targ_cfg, position, trigger, noise_scale: float = .1):
+    def forward(self, targ_cfg, position, trigger, noise_scale: float = .1, mask: torch.Tensor = None):
         """
 
-        :param u: target info [batch, inputs]
+        :param targ_cfg:
+        :param position:
+        :param trigger:
+        :param noise_scale:
+        :param mask:
         :return: [batch, outputs]
         """
         x = self.x + self.dt / self.tau * (
@@ -192,6 +196,9 @@ class RNN(nn.Module):
                 + noise_scale * torch.randn(self.x.shape)
         )
         r = self.non_linearity(self.x)
+        if mask is not None:
+            x *= mask
+            r *= mask
         self.x = x
         self.r = r
 
@@ -211,7 +218,7 @@ class MultiAreaNetwork(nn.Module, metaclass=abc.ABCMeta):
                 'feedback': [6, 3],
                 'trigger': [1]
             }
-            self.model_inputs = MLP(layer_sizes=layer_size, input_size=input_size, output_size=n_hidden)
+            self.model_inputs = MLP(input_size=input_size, output_size=n_hidden)
 
         self.rnn = RNN(hidden_layer_size=n_hidden)
         self.dist_loss = DistanceLoss(x_locations=self.rnn.x_loc, y_locations=self.rnn.y_loc, device=device,
@@ -256,10 +263,10 @@ class MultiAreaNetwork(nn.Module, metaclass=abc.ABCMeta):
     def reset_optimizer(self):
         """Reset optimizer"""
 
-    def save_model(self, save_path: str = None):
+    def save_model(self):
         state_dict = self.state_dict()
         data_dict = {'model_state': state_dict, 'full_model': self}
-        with open(save_path, 'wb') as handle:
+        with open(self.save_path, 'wb') as handle:
             pickle.dump(data_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     def set_savepath(self):
@@ -381,7 +388,7 @@ class SequentialReachingNetwork(MultiAreaNetwork):
         return torch.from_numpy(np.stack(targets).astype(np.float32)).to(self.device)
 
     def forward(self, targets, pause_duration: int = 10, hold_duration: int = 50,
-                tolerance: float = 5, noise_scale: float = .2):
+                tolerance: float = 5, noise_scale: float = .2, mask: torch.Tensor = None):
         self.reach_num = np.zeros(targets.shape[0], dtype=int)
         target = targets.reshape(targets.shape[0], -1) / self.max_bound
         self.rnn.reset_state(batch_size=target.shape[0])
@@ -409,7 +416,8 @@ class SequentialReachingNetwork(MultiAreaNetwork):
             # input = torch.hstack([target, position / self.max_bound, trigger_sig[:, None], reach_nums])
             rnn_inputs = self.model_inputs(target, position / self.max_bound, trigger_sig[time, :, None])
             # pdb.set_trace()
-            rnn_hidden, rnn_activation = self.rnn(*rnn_inputs, noise_scale=noise_scale)
+            rnn_hidden, rnn_activation = self.rnn(*rnn_inputs, noise_scale=noise_scale, mask=mask)
+
             if self.control == 'position':
                 position = rnn_activation @ self.Wout + torch.tensor(
                     [self.max_bound / 2, self.max_bound / 2])
@@ -666,8 +674,7 @@ class SequentialReachingNetwork(MultiAreaNetwork):
                 self.Loss.append(sum_loss)
                 nn.utils.clip_grad_norm_(self.parameters(), max_norm=max_norm)
                 optim.step()
-                if np.isnan(positions.detach().cpu().numpy()).any():
-                    pdb.set_trace()
+
                 if (loop % eval_freq) == 0:
                     logging.info(f"Iteration {loop}: Loss: {self.Loss[-1]}")
                     self.save_checkpoint(checkpoint=(loop // eval_freq))
