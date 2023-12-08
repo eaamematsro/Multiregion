@@ -8,7 +8,8 @@ import matplotlib as mpl
 from networks import (RNN, CNN, MLP, SequentialReachingNetwork)
 from matplotlib.animation import FuncAnimation, PillowWriter
 from sklearn.decomposition import PCA
-
+from sklearn.metrics import r2_score
+from itertools import combinations
 # TODO: Check if regions have different abstraction levels
 
 
@@ -198,14 +199,21 @@ class Network(SequentialReachingNetwork):
         # fig, ax = plt.subplots(1, 2, figsize=(30, 12))
         # self.ani_fig = (fig, ax)
 
-    def evaluate_contribution(self, cmap: mpl.cm.ScalarMappable = None,):
+    def evaluate_contribution(self, cmap: mpl.cm.ScalarMappable = None, plot: bool = False):
 
+        def gini(x: list[float]) -> float:
+            x = np.array(x, dtype=np.float32)
+            n = len(x)
+            diffs = sum(abs(i - j) for i, j in combinations(x, r=2))
+            return diffs / (2 * n ** 2 * x.mean())
+
+        plt.close('all')
         if cmap is None:
             cmap = mpl.cm.plasma
 
         grid_width = self.rnn.grid_width
         position = self.max_bound / 2 * torch.ones(1, 2)
-        targets = self.sample_targets(batch_size=1)
+        targets = self.sample_targets(batch_size=100)
 
         mask = torch.ones(self.rnn.J.shape[0])
         with torch.no_grad():
@@ -221,14 +229,113 @@ class Network(SequentialReachingNetwork):
             with torch.no_grad():
                 positions, rnn_activation = self.forward(targets, noise_scale=0, mask=mask)
             position_store.append(positions)
-        fig, ax = plt.subplots(1, 2)
+
+        if plot:
+            fig, ax = plt.subplots(1, 2)
+
+        results = []
 
         for idx, position in enumerate(position_store):
-            ax[0].plot(position[:, 0, 0], color=cmap(normalization(idx)))
-            ax[1].scatter(idx, ((position - original_position)**2).sum())
-        ax[1].set_xlabel('Removed regions')
-        ax[1].set_yscale('log')
-        plt.show()
+            if plot:
+                ax[0].plot(position[:, 0, 0], color=cmap(normalization(idx)))
+                ax[1].scatter(idx, ((position - original_position)**2).mean())
+            vaf = r2_score(original_position.flatten().numpy(), position.flatten().numpy())
+            results.append({'Regions Removed': idx + 1,
+                           'Error': ((position.numpy() - original_position.numpy()) ** 2).mean(),
+                            'VAF': vaf, 'gini': np.nan,
+                            'Type': 'Cumulative', 'Preserved Region': np.nan,
+                            'Final Loss': self.Loss[-1],
+                            'VAF Ratio': np.nan,
+                            **self.params})
+        if plot:
+            ax[0].plot(original_position[:, 0, 0], color='k', ls='--', label='Unperturbed')
+            ax[0].legend()
+            ax[1].set_xlabel('Removed regions')
+            ax[1].set_yscale('log')
+
+        position_store = []
+        if plot:
+            fig2, ax2 = plt.subplots(1, 2)
+
+        for idx in range(grid_width):
+            mask = torch.ones(self.rnn.J.shape[0])
+            for n_idx in range(self.rnn.J.shape[0]):
+                if n_idx % grid_width == idx:
+                    mask[n_idx] = 0
+            with torch.no_grad():
+                positions, rnn_activation = self.forward(targets, noise_scale=0, mask=mask)
+            position_store.append(positions)
+
+        for idx, position in enumerate(position_store):
+            if plot:
+                ax2[0].plot(position[:, 0, 0], color=cmap(normalization(idx)))
+                ax2[1].scatter(idx, ((position - original_position)**2).mean())
+            vaf = r2_score(original_position.flatten().numpy(), position.flatten().numpy())
+            results.append({'Regions Removed': idx, 'Error': ((position.numpy() - original_position.numpy()) ** 2).mean(),
+                            **self.params,
+                            'Type': 'Single', 'Preserved Region': np.nan,
+                            'VAF': vaf, 'gini': np.nan,
+                            'Final Loss': self.Loss[-1],
+                            'VAF Ratio': np.nan,
+                            })
+
+        for sample in range(25):
+            vafs = []
+            curr_results = []
+            targets = self.sample_targets(batch_size=24)
+            with torch.no_grad():
+                original_position, _ = self.forward(targets, noise_scale=0, mask=mask)
+            for idx in range(grid_width):
+                plt.close('all')
+                mask = torch.zeros(self.rnn.J.shape[0])
+                for n_idx in range(self.rnn.J.shape[0]):
+                    if n_idx % grid_width == idx:
+                        mask[n_idx] = 1
+                with torch.no_grad():
+                    _, rnn_activation = self.forward(targets, noise_scale=0, mask=mask)
+                rnn_activity = rnn_activation.numpy()
+                positions = original_position.numpy()
+                if self.control == 'position':
+                    all_features = rnn_activity.reshape(rnn_activity.shape[0] * rnn_activity.shape[1], -1)
+                    target = positions.reshape(positions.shape[0] * positions.shape[1], -1)
+                    features = np.hstack([all_features[:, np.abs(all_features.sum(axis=0)) > np.finfo('float').eps],
+                                          np.ones((all_features.shape[0], 1))])
+                elif self.control == 'acceleration':
+                    velocity = np.diff(positions, axis=0)
+                    acceleration = np.diff(velocity, axis=0)
+                    target = np.swapaxes(acceleration, 0, 1).reshape(acceleration.shape[0] * acceleration.shape[1], -1)
+                    rnn_activity = rnn_activity[:-2]
+                    all_features = np.swapaxes(rnn_activity, 0, 1).reshape(rnn_activity.shape[0] * rnn_activity.shape[1], -1)
+                    features = np.hstack([all_features[:, np.abs(all_features.sum(axis=0)) > np.finfo('float').eps],
+                                          np.ones((all_features.shape[0], 1))])
+                k = 1e-3
+                coeffs = np.linalg.inv(features.T @ features + k * np.eye(features.shape[1])) @ features.T @ target
+                testing = features @ coeffs
+                r2 = r2_score(target, testing)
+                vafs.append(r2)
+                if hasattr(self, 'target_loss'):
+                    final_loss = float(self.target_loss[-1])
+                else:
+                    final_loss = self.Loss[-1]
+                curr_results.append(
+                    {'Regions Removed': np.nan, 'Error': ((testing - target) ** 2).mean(),
+                     **self.params,
+                     'Type': 'Single Linear', 'Preserved Region': idx,
+                     'VAF': r2,
+                     'Final Loss': final_loss,}
+                    )
+            gini_coeff = gini(vafs)
+            [result.update({'gini': gini_coeff}) for result in curr_results]
+            [result.update({'VAF Ratio': vafs[-1]/vafs[0]}) for result in curr_results]
+            results.extend(curr_results)
+        if plot:
+            ax2[0].plot(original_position[:, 0, 0], color='k', ls='--', label='Unperturbed')
+            ax2[0].legend()
+            ax2[1].set_xlabel('Removed regions')
+            ax2[1].set_yscale('log')
+            plt.pause(.01)
+        return results
+
 
 def main(gpu: int = 0):
     if torch.cuda.is_available():
@@ -240,7 +347,7 @@ def main(gpu: int = 0):
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     samples = 10
-    decay = np.logspace(-5, -2, samples, base=10)
+    decay = np.logspace(-4, -2, samples, base=10)
     for sample, wd in zip(range(samples), decay):
         plt.close('all')
         model = Network(device=device, max_speed=2, wd=wd)

@@ -354,6 +354,7 @@ class SequentialReachingNetwork(MultiAreaNetwork):
         self.control = control_type
         self.max_speed = max_speed
         self.difficulty = 0
+        self.target_loss = []
 
     def initialize_targets(self, n_clusters: int = 3, max_bound: int = 1, sigma_factor: float = .05):
         vals = np.linspace(0, max_bound, 100)
@@ -494,7 +495,7 @@ class SequentialReachingNetwork(MultiAreaNetwork):
         dist_loss = self.dist_loss(self.rnn.J)
         target_loss = self.get_target_loss(targets, positions, **kwargs)
         energy_loss = self.get_energy_loss(rnn_act, **kwargs)
-
+        self.target_loss.append(target_loss.detach().numpy())
         return target_loss + 1e-5 * energy_loss + dist_loss
 
     def get_target_loss(self, targets, positions, epsilon: float = 5, method: str = 'sequenced',
@@ -649,10 +650,10 @@ class SequentialReachingNetwork(MultiAreaNetwork):
 
         self.reset_optimizer()
 
-    def fit(self, n_loops: list[int] = None, methods: list[int] = None, batch_size: int = 128, eval_freq: int = 50,
+    def fit(self, n_loops: list[int] = None, methods: list[int] = None, batch_size: int = 24, eval_freq: int = 50,
             pause: int = 50, eps: float = 1, hold_duration: int = 50, max_norm: float = 1, max_batch: int = 15):
         if n_loops is None:
-            n_loops = [5000, ]
+            n_loops = [15000, ]
         if methods is None:
             methods = ['naive', ]
         optim = self.optimizer
@@ -671,9 +672,9 @@ class SequentialReachingNetwork(MultiAreaNetwork):
                                                hold_duration=hold_duration, pause=pause)
                     Loss.backward()
                     sum_loss += Loss.item()
+                    nn.utils.clip_grad_norm_(self.parameters(), max_norm=max_norm)
+                    optim.step()
                 self.Loss.append(sum_loss)
-                nn.utils.clip_grad_norm_(self.parameters(), max_norm=max_norm)
-                optim.step()
 
                 if (loop % eval_freq) == 0:
                     logging.info(f"Iteration {loop}: Loss: {self.Loss[-1]}")
