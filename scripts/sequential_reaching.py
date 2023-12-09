@@ -15,7 +15,7 @@ from itertools import combinations
 
 class Network(SequentialReachingNetwork):
     def __init__(self, duration: int = 300, n_clusters: int = 3, n_reaches: int = 2, use_cnn: bool = False,
-                 device: torch.device = None, load_cnn: bool = False, base_lr: float = 1e-3,
+                 device: torch.device = None, load_cnn: bool = False, base_lr: float = 1e-4,
                  control_type: str = 'acceleration',
                  wd: float = 1e-4, n_hidden: int = 250, **kwargs):
         super().__init__(duration=duration, n_clusters=n_clusters, n_reaches=n_reaches, use_cnn=use_cnn,
