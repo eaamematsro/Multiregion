@@ -697,8 +697,6 @@ class SequentialReachingNetwork(MultiAreaNetwork):
             self.optimizer = self.opt_fun(
                 self.parameters(), lr=self.opt_config['lr'], weight_decay=self.opt_config['wd']
             )
-            pdb.set_trace()
-
 
 
 
