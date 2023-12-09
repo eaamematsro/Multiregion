@@ -309,7 +309,7 @@ class MultiAreaNetwork(nn.Module, metaclass=abc.ABCMeta):
 
 
 class SequentialReachingNetwork(MultiAreaNetwork):
-    def __init__(self, duration: int = 500, n_clusters: int = 3, n_reaches: int = 3, use_cnn: bool = False,
+    def __init__(self, duration: int = 500, n_clusters: int = 2, n_reaches: int = 3, use_cnn: bool = False,
                  device: torch.device = None, load_cnn: bool = False, base_lr: float = 1e-4,
                  control_type: str = 'acceleration', max_speed: float = 1,
                  wd: float = 1e-3, n_hidden: int = 500, optimizer: torch.optim.Optimizer = None, **kwargs):
@@ -389,7 +389,7 @@ class SequentialReachingNetwork(MultiAreaNetwork):
         return torch.from_numpy(np.stack(targets).astype(np.float32)).to(self.device)
 
     def forward(self, targets, pause_duration: int = 10, hold_duration: int = 50,
-                tolerance: float = 5, noise_scale: float = .2, mask: torch.Tensor = None):
+                tolerance: float = 5, noise_scale: float = .05, mask: torch.Tensor = None):
         self.reach_num = np.zeros(targets.shape[0], dtype=int)
         target = targets.reshape(targets.shape[0], -1) / self.max_bound
         self.rnn.reset_state(batch_size=target.shape[0])

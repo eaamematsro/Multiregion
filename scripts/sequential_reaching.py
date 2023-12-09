@@ -122,10 +122,12 @@ class Network(SequentialReachingNetwork):
         # pdb.set_trace()
 
     def test_sensitivity(self, samples: int = 10, cmap: mpl.cm.ScalarMappable = None,
-                         plot_3d: bool = True):
+                         plot_3d: bool = True, save_path: str = None):
 
         if cmap is None:
             cmap = mpl.cm.plasma
+
+        plt.close('all')
 
         normalization = mpl.colors.Normalize(vmin=0, vmax=samples)
         grid_width = self.rnn.grid_width
@@ -191,6 +193,9 @@ class Network(SequentialReachingNetwork):
             axis.set_ylabel('PC 2')
             if plot_3d:
                 axis.set_zlabel('PC 3')
+        if save_path is not None:
+            file_name = save_path / 'pc_plot'
+            fig.savefig(file_name)
         plt.pause(1)
 
     def make_fig_layout(self):
@@ -200,7 +205,7 @@ class Network(SequentialReachingNetwork):
         # self.ani_fig = (fig, ax)
 
     def evaluate_contribution(self, cmap: mpl.cm.ScalarMappable = None, plot: bool = False):
-
+    # TODO: implemnt linear probes for initial target location information
         def gini(x: list[float]) -> float:
             x = np.array(x, dtype=np.float32)
             n = len(x)
@@ -337,17 +342,17 @@ class Network(SequentialReachingNetwork):
         return results
 
 
-def main(gpu: int = 0):
+def main(gpu: int = 2):
     if torch.cuda.is_available():
         torch.set_default_tensor_type(torch.cuda.FloatTensor)
 
     ncudas = torch.cuda.device_count()
     if ncudas > 1:
-        device = torch.device(f"cuda:{0}" if torch.cuda.is_available() else "cpu")
+        device = torch.device(f"cuda:{gpu}" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     samples = 10
-    decay = np.logspace(-4, -2, samples, base=10)
+    decay = np.logspace(-5, -3, samples, base=10)
     for sample, wd in zip(range(samples), decay):
         plt.close('all')
         model = Network(device=device, max_speed=2, wd=wd)
@@ -358,9 +363,10 @@ def main(gpu: int = 0):
     model.test_sensitivity()
     model.evaluate_network()
     model.plot_activity()
-    pdb.set_trace()
 
 
 
 if __name__ == '__main__':
-    main()
+    repeats = 5
+    for _ in range(repeats):
+        main()
