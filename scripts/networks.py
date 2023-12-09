@@ -653,8 +653,8 @@ class SequentialReachingNetwork(MultiAreaNetwork):
 
         self.reset_optimizer()
 
-    def fit(self, n_loops: list[int] = None, methods: list[int] = None, batch_size: int = 24, eval_freq: int = 50,
-            pause: int = 50, eps: float = 1, hold_duration: int = 50, max_norm: float = 1, max_batch: int = 30):
+    def fit(self, n_loops: list[int] = None, methods: list[int] = None, batch_size: int = 32, eval_freq: int = 50,
+            pause: int = 50, eps: float = 1, hold_duration: int = 50, max_norm: float = 1, max_batch: int = 64):
         if n_loops is None:
             n_loops = [15000, ]
         if methods is None:
