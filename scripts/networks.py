@@ -664,11 +664,11 @@ class SequentialReachingNetwork(MultiAreaNetwork):
         for loop_dir, method in zip(n_loops, methods):
             self.reset_optimizer()
             for loop in range(loop_dir):
-                optim.zero_grad()
                 sigma = self.get_noise(loop, loop_dir, sig_0=0, min_noise=0)
                 # self.set_difficulty(loop, loop_dir)
                 sum_loss = 0
                 for epoch in range(epochs):
+                    optim.zero_grad()
                     targets = self.sample_targets(batch_size=max_batch, difficulty=self.difficulty)
                     positions, rnn_act = self.forward(targets, noise_scale=sigma, tolerance=eps)
                     Loss = self.calculate_loss(targets, positions, rnn_act, method=method, epsilon=eps,
