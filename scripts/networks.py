@@ -14,6 +14,7 @@ import torch.nn as nn
 from losses import DistanceLoss
 from pathlib import Path
 from datetime import date
+from typing import Optional, Tuple, Dict
 
 
 class CNN(nn.Module):
@@ -152,8 +153,23 @@ class RNN(nn.Module):
     def __init__(self, hidden_layer_size: int = 100, input_size: int = 50,
                  tau: float = .05, position_size: int = 2,
                  dt: float = 0.01, non_linearity: nn.functional = None, grid_width: int = 10,
-                 min_g: float = 0.5, max_g: float = 2):
+                 min_g: float = 0.5, max_g: float = 2, input_sources: Optional[Dict[str, Tuple[int, bool]]] = None,):
         super().__init__()
+
+        self.I = nn.ParameterDict({})
+
+        if input_sources is not None:
+            for input_name, (input_size, learnable) in input_sources.items():
+                input_mat = np.random.randn(input_size, hidden_layer_size) / np.sqrt(hidden_layer_size)
+                input_tens = torch.from_numpy((input_mat).astype(np.float32))
+                if learnable:
+                    self.I[input_name] = nn.Parameter(input_tens)
+                else:
+                    self.I[input_name] = input_tens
+                self.input_names = list(input_sources.keys())
+        else:
+            self.input_names = []
+
         j_mat = np.zeros((hidden_layer_size, hidden_layer_size)).astype(np.float32)
 
         self.x_loc, self.y_loc = np.zeros(hidden_layer_size), np.zeros(hidden_layer_size)
@@ -181,7 +197,8 @@ class RNN(nn.Module):
         self.x = torch.randn((batch_size, self.n)) / torch.sqrt(torch.tensor(self.n))
         self.r = self.non_linearity(self.x)
 
-    def forward(self, targ_cfg, trigger, noise_scale: float = .1, mask: torch.Tensor = None):
+    def forward(self, inputs, mask: torch.Tensor = None, validate_inputs: bool = False,
+                noise_scale: float = 0.1):
         """
 
         :param targ_cfg:
@@ -191,8 +208,18 @@ class RNN(nn.Module):
         :param mask:
         :return: [batch, outputs]
         """
+
+        if validate_inputs:
+            input_names = set(list(inputs.keys()))
+            assert input_names.intersection(self.input_names) == input_names
+
+        out = 0
+        for input_name, input_value in inputs.items():
+            # print(input_name, input_value.shape, self.I[input_name].shape)
+            out += input_value @ self.I[input_name]
+
         x = self.x + self.dt / self.tau * (
-                -self.x + targ_cfg + trigger + self.r @ self.J + self.B
+                -self.x + self.r @ self.J + self.B + out
                 + noise_scale * torch.randn(self.x.shape)
         )
         r = self.non_linearity(self.x)
@@ -207,24 +234,26 @@ class RNN(nn.Module):
 
 class MultiAreaNetwork(nn.Module, metaclass=abc.ABCMeta):
     def __init__(self, duration: int = 500, use_cnn: bool = False, input_size: int = 10,
-                 device: torch.device = None, wd: float = 1e-3, n_hidden: int = 500, **kwargs):
+                 device: torch.device = None, wd: float = 1e-3, n_hidden: int = 500,
+                 input_sources: Optional[Dict[str, Tuple[int, bool]]] = None, **kwargs):
         super().__init__()
 
-        if use_cnn:
-            raise NotImplementedError
-        else:
-            layer_size = {
-                'target_cfg': [12, 6, 4],
-                # 'feedback': [6, 3],
-                'trigger': [1]
-            }
-            self.model_inputs = MLP(input_size=input_size, output_size=n_hidden, layer_sizes=layer_size)
+        # if use_cnn:
+        #     raise NotImplementedError
+        # else:
+        #     layer_size = {
+        #         'target_cfg': [12, 6, 4],
+        #         # 'feedback': [6, 3],
+        #         'trigger': [1]
+        #     }
+        #     self.model_inputs = MLP(input_size=input_size, output_size=n_hidden, layer_sizes=layer_size)
 
-        self.rnn = RNN(hidden_layer_size=n_hidden)
+        self.rnn = RNN(hidden_layer_size=n_hidden, input_sources=input_sources
+                       )
         self.dist_loss = DistanceLoss(x_locations=self.rnn.x_loc, y_locations=self.rnn.y_loc, device=device,
                                       weight=wd)
 
-        modules = [self.model_inputs, self.rnn]
+        modules = [self.rnn]
         for module in modules:
             module.to(device)
 
@@ -313,8 +342,10 @@ class SequentialReachingNetwork(MultiAreaNetwork):
                  device: torch.device = None, load_cnn: bool = False, base_lr: float = 1e-4,
                  control_type: str = 'acceleration', max_speed: float = 1,
                  wd: float = 1e-3, n_hidden: int = 500, optimizer: torch.optim.Optimizer = None, **kwargs):
+
+        input_sources = {'target': (n_reaches * 2, True), 'trigger': (1, True)}
         super().__init__(duration=duration, use_cnn=use_cnn,
-                         device=device, wd=wd, n_hidden=n_hidden, input_size=(n_reaches * 2))
+                         device=device, wd=wd, n_hidden=n_hidden, input_sources=input_sources)
 
         assert control_type in ['acceleration', 'position']
 
@@ -400,14 +431,14 @@ class SequentialReachingNetwork(MultiAreaNetwork):
         trigger_sig[int(.8 * hold_duration): int(1.2 * hold_duration)] = 1
         seg_time = int(self.duration / self.reaches)
         for reach in range(self.reaches):
-            if reach == 0:
-                rand_pert = np.random.randint(0, hold_duration)
-            else:
-                rand_pert = 0
+            # rand_pert = np.random.randint(0, int(hold_duration / 2))
+            rand_pert = 0
+
             trigger_sig[int(.8 * hold_duration) + ((reach + 1) * (seg_time + pause_duration)) + rand_pert
                         :int(1.2 * hold_duration) + ((reach + 1) * (seg_time + pause_duration)) + rand_pert] = 1
 
         if self.control == 'acceleration':
+            acceleration = torch.zeros((target.shape[0], 2))
             velocity = torch.zeros((target.shape[0], 2))
             position = self.max_bound / 2 * torch.ones(targets.shape[0], 2)
         elif self.control == 'position':
@@ -419,15 +450,17 @@ class SequentialReachingNetwork(MultiAreaNetwork):
             # reach_nums = (torch.from_numpy(self.reach_num.astype(np.float32))[:, None]).to(self.device)
 
             # input = torch.hstack([target, position / self.max_bound, trigger_sig[:, None], reach_nums])
-            rnn_inputs = self.model_inputs(target, trigger_sig[time, :, None])
-            rnn_hidden, rnn_activation = self.rnn(*rnn_inputs, noise_scale=noise_scale, mask=mask)
+            rnn_inputs = {'target': target, 'trigger': trigger_sig[time, :, None]}
+            # rnn_inputs = self.model_inputs(target, trigger_sig[time, :, None])
+            rnn_hidden, rnn_activation = self.rnn(inputs=rnn_inputs, noise_scale=noise_scale, mask=mask)
 
             if self.control == 'position':
                 position = rnn_activation @ self.Wout + torch.tensor(
                     [self.max_bound / 2, self.max_bound / 2])
             elif self.control == 'acceleration':
-                velocity = velocity + self.rnn.dt * (rnn_activation @ self.Wout)
-                position = position + velocity
+                # acceleration = acceleration + self.rnn.dt / self.rnn.tau * ((rnn_activation @ self.Wout) - acceleration)
+                velocity = velocity + self.rnn.dt / self.rnn.tau * (rnn_activation @ self.Wout)
+                position = position + self.rnn.dt / self.rnn.tau * velocity
             position_store[time] = torch.clamp(position, -5, 5)  # + noise_scale * torch.randn_like(position)
             rnn_store[time] = rnn_activation
             # self.get_reach_number(targets, position, eps=tolerance)
@@ -639,7 +672,7 @@ class SequentialReachingNetwork(MultiAreaNetwork):
                 curr_reach_num[batch] += 1
         self.reach_num = np.minimum(curr_reach_num, self.reaches - 1)
 
-    def burn_in(self, n_loops: int = 500, batch_size: int = 10, max_norm: float = 1):
+    def burn_in(self, n_loops: int = 500, batch_size: int = 16, max_norm: float = 1):
         self.reset_optimizer()
         optimizer = self.optimizer
         for loop in range(n_loops):
@@ -653,8 +686,8 @@ class SequentialReachingNetwork(MultiAreaNetwork):
 
         self.reset_optimizer()
 
-    def fit(self, n_loops: list[int] = None, methods: list[int] = None, batch_size: int = 32, eval_freq: int = 50,
-            pause: int = 50, eps: float = 1, hold_duration: int = 50, max_norm: float = 1, max_batch: int = 64):
+    def fit(self, n_loops: list[int] = None, methods: list[int] = None, batch_size: int = 16, eval_freq: int = 50,
+            pause: int = 50, eps: float = 1, hold_duration: int = 50, max_norm: float = 1, max_batch: int = 32):
         if n_loops is None:
             n_loops = [15000, ]
         if methods is None:
@@ -664,8 +697,9 @@ class SequentialReachingNetwork(MultiAreaNetwork):
         for loop_dir, method in zip(n_loops, methods):
             self.reset_optimizer()
             for loop in range(loop_dir):
-                sigma = self.get_noise(loop, loop_dir, sig_0=0, min_noise=0)
+                # sigma = self.get_noise(loop, loop_dir, sig_0=0, min_noise=0)
                 # self.set_difficulty(loop, loop_dir)
+                sigma = 0.01
                 sum_loss = 0
                 for epoch in range(epochs):
                     optim.zero_grad()
