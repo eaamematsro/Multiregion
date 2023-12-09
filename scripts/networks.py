@@ -375,6 +375,8 @@ class SequentialReachingNetwork(MultiAreaNetwork):
                 self.parameters(), lr=base_lr, weight_decay=wd
             )
         self.opt_fun = optimizer
+        self.lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(self.optimizer,
+                                                                                 T_0=250, T_mult=2, eta_min=1e-6)
         self.opt_config = {'lr': base_lr, 'wd': wd}
         self.load_cnn = load_cnn
         self.probs = None
@@ -387,7 +389,7 @@ class SequentialReachingNetwork(MultiAreaNetwork):
         self.difficulty = 0
         self.target_loss = []
 
-    def initialize_targets(self, n_clusters: int = 2, max_bound: int = 1, sigma_factor: float = .05):
+    def initialize_targets(self, n_clusters: int = 2, max_bound: int = 1, sigma_factor: float = .001):
         vals = np.linspace(0, max_bound, 100)
         sigma = (max_bound * sigma_factor)
         self.max_bound = max_bound
@@ -711,6 +713,7 @@ class SequentialReachingNetwork(MultiAreaNetwork):
                     sum_loss += Loss.item()
                     nn.utils.clip_grad_norm_(self.parameters(), max_norm=max_norm)
                     optim.step()
+                    self.lr_scheduler.step()
                 self.Loss.append(sum_loss)
 
                 if (loop % eval_freq) == 0:
