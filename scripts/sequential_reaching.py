@@ -199,7 +199,7 @@ class Network(SequentialReachingNetwork):
         plt.pause(1)
 
     def make_fig_layout(self):
-        self.fig, self.ax = plt.subplots(1, 4, figsize=(25, 12))
+        self.fig, self.ax = plt.subplots(1, 4, figsize=(30, 8))
         self.draw_colorbar = True
         # fig, ax = plt.subplots(1, 2, figsize=(30, 12))
         # self.ani_fig = (fig, ax)
