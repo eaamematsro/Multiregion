@@ -1,15 +1,17 @@
 import pdb
-import copy
+from itertools import combinations
+
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn as nn
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-from networks import (RNN, CNN, MLP, SequentialReachingNetwork)
 from matplotlib.animation import FuncAnimation, PillowWriter
 from sklearn.decomposition import PCA
 from sklearn.metrics import r2_score
-from itertools import combinations
+from analyze_models import make_axis_nice, set_plt_params
+from networks import (SequentialReachingNetwork)
+
+
 # TODO: Check if regions have different abstraction levels
 
 
@@ -19,8 +21,8 @@ class Network(SequentialReachingNetwork):
                  control_type: str = 'acceleration',
                  wd: float = 1e-5, n_hidden: int = 250, **kwargs):
         super().__init__(duration=duration, n_clusters=n_clusters, n_reaches=n_reaches, use_cnn=use_cnn,
-                 device=device, load_cnn=load_cnn, base_lr=base_lr,
-                 control_type=control_type, wd=wd, n_hidden=n_hidden, **kwargs)
+                         device=device, load_cnn=load_cnn, base_lr=base_lr,
+                         control_type=control_type, wd=wd, n_hidden=n_hidden, **kwargs)
 
         assert control_type in ['acceleration', 'position']
         if device is None:
@@ -91,7 +93,7 @@ class Network(SequentialReachingNetwork):
         axes[0].set_xlabel('Region')
 
         for reach in range(self.reaches):
-            axes[1].scatter(targets[reach, 0], targets[reach, 0], label=f'Target {reach +1}')
+            axes[1].scatter(targets[reach, 0], targets[reach, 0], label=f'Target {reach + 1}')
         axes[1].legend()
         im = axes[0].imshow(a, cmap=cmap, norm=normalization, aspect='auto')
         tj, = axes[1].plot(position[0, 0], position[0, 1])
@@ -112,7 +114,7 @@ class Network(SequentialReachingNetwork):
             fig,
             animation_function,
             frames=activity.shape[0],
-            interval=1000/fps,
+            interval=1000 / fps,
             blit=False
         )
         handle = self.save_path.parents[0] / 'animation.gif'
@@ -123,7 +125,6 @@ class Network(SequentialReachingNetwork):
 
     def test_sensitivity(self, samples: int = 10, cmap: mpl.cm.ScalarMappable = None,
                          plot_3d: bool = True, save_path: str = None):
-
         if cmap is None:
             cmap = mpl.cm.plasma
 
@@ -131,21 +132,21 @@ class Network(SequentialReachingNetwork):
 
         normalization = mpl.colors.Normalize(vmin=0, vmax=samples)
         grid_width = self.rnn.grid_width
-        position = self.max_bound / 2 * torch.ones(samples, 2)
         # for reach in range(self.reaches):
         reach = 0
         targets = self.sample_targets(batch_size=samples)
         targets[:, reach] = targets[0, reach]
         sorted_probs = np.argsort(self.probs)
         sorted_probs = np.flip(sorted_probs)
+        delay_length = 50
         for sample in range(samples):
             target = sorted_probs[sample]
             targets[sample, 1:] = target * torch.ones((self.reaches - 1)) / 100
 
         with torch.no_grad():
             positions, rnn_activation = self.forward(targets, noise_scale=0)
+
         activity = rnn_activation.squeeze().cpu().numpy()
-        position = positions.squeeze().cpu().numpy()
         nrows = np.ceil(activity.shape[2] / grid_width).astype(int)
         imaged_activity = np.zeros((activity.shape[0], samples, nrows, grid_width))
         for neu_idx in range(activity.shape[2]):
@@ -153,42 +154,106 @@ class Network(SequentialReachingNetwork):
             row_idx = neu_idx // grid_width
             imaged_activity[:, :, row_idx, col_idx] = activity[:, :, neu_idx]
 
-        pcs = np.zeros((grid_width, int(samples * imaged_activity.shape[0] / 2), 3))
+        pcs_prep = np.zeros((grid_width, int(samples * delay_length), 3))
+        pcs_prep2 = np.zeros((grid_width, int(samples * (imaged_activity.shape[0] / 2 - delay_length)), 3))
+
+        pcs_exec = np.zeros((grid_width, int(samples * (imaged_activity.shape[0] / 2 - delay_length)), 3))
+        pcs_exec2 = np.zeros((grid_width, int(samples * delay_length), 3))
+
+
         duration = int(imaged_activity.shape[0] / 2)
         for region in range(grid_width):
             region_activity = np.swapaxes(
-                imaged_activity[:int(imaged_activity.shape[0] / 2), :, :, region], 0, -1
+                imaged_activity[:delay_length, :, :, region], 0, -1
             )
-            flattened_activity = region_activity.reshape(region_activity.shape[0], -1)
+            flattened_activity_prep = region_activity.reshape(region_activity.shape[0], -1)
+            pca_prep = PCA(n_components=3)
+            pcs_prep[region] = pca_prep.fit_transform(flattened_activity_prep.T)
+
+            region_activity = np.swapaxes(
+                imaged_activity[delay_length:int(imaged_activity.shape[0] / 2), :, :, region], 0, -1
+            )
+            flattened_activity_exec = region_activity.reshape(region_activity.shape[0], -1)
             pca = PCA(n_components=3)
-            pcs[region] = pca.fit_transform(flattened_activity.T)
+            pcs_exec[region] = pca.fit_transform(flattened_activity_exec.T)
+            pcs_prep2[region] = pca_prep.transform(flattened_activity_exec.T)
+            pcs_exec2[region] = pca.transform(flattened_activity_prep.T)
+
+        set_plt_params()
 
         if plot_3d:
-            fig, ax = plt.subplots(1, grid_width, figsize=(5 * grid_width, 5),
+            fig, ax = plt.subplots(4, grid_width, figsize=(5 * grid_width, 10),
                                    subplot_kw={"projection": "3d"})
         else:
-            fig, ax = plt.subplots(1, grid_width, figsize=(5 * grid_width, 5))
+            fig, ax = plt.subplots(4, grid_width, figsize=(5 * grid_width, 10))
 
-        for region, axis in zip(range(grid_width), ax):
-            axis.set_title(f"Region {region}")
+        for region, axis in zip(range(grid_width), ax.T):
+            axis[0].set_title(f"Region {region}")
             for sample in range(samples):
                 if plot_3d:
-                    axis.scatter(pcs[region, sample * duration, 0], pcs[region, sample * duration, 1],
-                                 pcs[region, sample * duration, 2],
+                    axis[0].scatter(pcs_prep[region, sample * delay_length, 0],
+                                    pcs_prep[region, delay_length * sample, 1],
+                                    pcs_prep[region, sample * delay_length, 2],
+                                    color=cmap(normalization(sample)))
+                    axis[0].plot(pcs_prep[region, sample * delay_length: (sample + 1) * delay_length, 0],
+                                 pcs_prep[region, sample * delay_length: (sample + 1) * delay_length, 1],
+                                 pcs_prep[region, sample * delay_length: (sample + 1) * delay_length, 2],
                                  color=cmap(normalization(sample)))
-                    axis.plot(pcs[region, sample * duration: (sample + 1) * duration, 0],
-                                    pcs[region, sample * duration: (sample + 1) * duration, 1],
-                              pcs[region, sample * duration: (sample + 1) * duration, 2],
-                              color=cmap(normalization(sample)))
+
+                    axis[1].scatter(pcs_exec2[region, sample * delay_length, 0],
+                                    pcs_exec2[region, sample * delay_length, 1],
+                                    pcs_exec2[region, sample * delay_length, 2],
+                                    color=cmap(normalization(sample)))
+                    axis[1].plot(
+                        pcs_exec2[region, sample * delay_length: (sample + 1) * delay_length,
+                        0],
+                        pcs_exec2[region, sample * delay_length: (sample + 1) * delay_length,
+                        1],
+                        pcs_exec2[region, sample * delay_length: (sample + 1) * delay_length,
+                        2],
+                        color=cmap(normalization(sample)))
+
+                    axis[2].scatter(pcs_prep2[region, sample * delay_length, 0],
+                                    pcs_prep2[region, delay_length * sample, 1],
+                                    pcs_prep2[region, sample * delay_length, 2],
+                                    color=cmap(normalization(sample)))
+                    axis[2].plot(pcs_prep2[region, sample * delay_length: (sample + 1) * delay_length, 0],
+                                 pcs_prep2[region, sample * delay_length: (sample + 1) * delay_length, 1],
+                                 pcs_prep2[region, sample * delay_length: (sample + 1) * delay_length, 2],
+                                 color=cmap(normalization(sample)))
+
+                    axis[3].scatter(pcs_exec[region, sample * (duration - delay_length), 0],
+                                    pcs_exec[region, sample * (duration - delay_length), 1],
+                                    pcs_exec[region, sample * (duration - delay_length), 2],
+                                    color=cmap(normalization(sample)))
+                    axis[3].plot(
+                        pcs_exec[region, sample * (duration - delay_length): (sample + 1) * (duration - delay_length),
+                        0],
+                        pcs_exec[region, sample * (duration - delay_length): (sample + 1) * (duration - delay_length),
+                        1],
+                        pcs_exec[region, sample * (duration - delay_length): (sample + 1) * (duration - delay_length),
+                        2],
+                        color=cmap(normalization(sample)))
                 else:
-                    axis.scatter(pcs[region, sample * duration, 0], pcs[region, sample * duration, 1],
+                    axis[0].scatter(pcs_prep[region, sample * delay_length, 0],
+                                    pcs_prep[region, sample * delay_length, 1],
+                                    color=cmap(normalization(sample)))
+                    axis[0].plot(pcs_prep[region, sample * delay_length: (sample + 1) * delay_length, 0],
+                                 pcs_prep[region, sample * delay_length: (sample + 1) * delay_length, 1],
                                  color=cmap(normalization(sample)))
-                    axis.plot(pcs[region, sample * duration: (sample + 1) * duration, 0],
-                              pcs[region, sample * duration: (sample + 1) * duration, 1],
-                              color=cmap(normalization(sample)))
+
+                    axis[1].scatter(pcs_exec[region, sample * (duration - delay_length), 0],
+                                    pcs_exec[region, sample * (duration - delay_length), 1],
+                                    color=cmap(normalization(sample)))
+                    axis[1].plot(
+                        pcs_exec[region, sample * (duration - delay_length): (sample + 1) * (duration - delay_length),
+                        0],
+                        pcs_exec[region, sample * (duration - delay_length): (sample + 1) * (duration - delay_length),
+                        1],
+                        color=cmap(normalization(sample)))
 
         fig.tight_layout()
-        for axis in ax:
+        for axis in ax.flatten():
             axis.set_xlabel('PC 1')
             axis.set_ylabel('PC 2')
             if plot_3d:
@@ -196,6 +261,7 @@ class Network(SequentialReachingNetwork):
         if save_path is not None:
             file_name = save_path / 'pc_plot'
             fig.savefig(file_name)
+        make_axis_nice(fig)
         plt.pause(1)
 
     def make_fig_layout(self):
@@ -205,7 +271,7 @@ class Network(SequentialReachingNetwork):
         # self.ani_fig = (fig, ax)
 
     def evaluate_contribution(self, cmap: mpl.cm.ScalarMappable = None, plot: bool = False):
-    # TODO: implemnt linear probes for initial target location information
+        # TODO: implemnt linear probes for initial target location information
         def gini(x: list[float]) -> float:
             x = np.array(x, dtype=np.float32)
             n = len(x)
@@ -243,10 +309,10 @@ class Network(SequentialReachingNetwork):
         for idx, position in enumerate(position_store):
             if plot:
                 ax[0].plot(position[:, 0, 0], color=cmap(normalization(idx)))
-                ax[1].scatter(idx, ((position - original_position)**2).mean())
+                ax[1].scatter(idx, ((position - original_position) ** 2).mean())
             vaf = r2_score(original_position.flatten().numpy(), position.flatten().numpy())
             results.append({'Regions Removed': idx + 1,
-                           'Error': ((position.numpy() - original_position.numpy()) ** 2).mean(),
+                            'Error': ((position.numpy() - original_position.numpy()) ** 2).mean(),
                             'VAF': vaf, 'gini': np.nan,
                             'Type': 'Cumulative', 'Preserved Region': np.nan,
                             'Final Loss': self.Loss[-1],
@@ -274,15 +340,16 @@ class Network(SequentialReachingNetwork):
         for idx, position in enumerate(position_store):
             if plot:
                 ax2[0].plot(position[:, 0, 0], color=cmap(normalization(idx)))
-                ax2[1].scatter(idx, ((position - original_position)**2).mean())
+                ax2[1].scatter(idx, ((position - original_position) ** 2).mean())
             vaf = r2_score(original_position.flatten().numpy(), position.flatten().numpy())
-            results.append({'Regions Removed': idx, 'Error': ((position.numpy() - original_position.numpy()) ** 2).mean(),
-                            **self.params,
-                            'Type': 'Single', 'Preserved Region': np.nan,
-                            'VAF': vaf, 'gini': np.nan,
-                            'Final Loss': self.Loss[-1],
-                            'VAF Ratio': np.nan,
-                            })
+            results.append(
+                {'Regions Removed': idx, 'Error': ((position.numpy() - original_position.numpy()) ** 2).mean(),
+                 **self.params,
+                 'Type': 'Single', 'Preserved Region': np.nan,
+                 'VAF': vaf, 'gini': np.nan,
+                 'Final Loss': self.Loss[-1],
+                 'VAF Ratio': np.nan,
+                 })
 
         for sample in range(25):
             vafs = []
@@ -310,7 +377,8 @@ class Network(SequentialReachingNetwork):
                     acceleration = np.diff(velocity, axis=0)
                     target = np.swapaxes(acceleration, 0, 1).reshape(acceleration.shape[0] * acceleration.shape[1], -1)
                     rnn_activity = rnn_activity[:-2]
-                    all_features = np.swapaxes(rnn_activity, 0, 1).reshape(rnn_activity.shape[0] * rnn_activity.shape[1], -1)
+                    all_features = np.swapaxes(rnn_activity, 0, 1).reshape(
+                        rnn_activity.shape[0] * rnn_activity.shape[1], -1)
                     features = np.hstack([all_features[:, np.abs(all_features.sum(axis=0)) > np.finfo('float').eps],
                                           np.ones((all_features.shape[0], 1))])
                 k = 1e-3
@@ -327,11 +395,11 @@ class Network(SequentialReachingNetwork):
                      **self.params,
                      'Type': 'Single Linear', 'Preserved Region': idx,
                      'VAF': r2,
-                     'Final Loss': final_loss,}
-                    )
+                     'Final Loss': final_loss, }
+                )
             gini_coeff = gini(vafs)
             [result.update({'gini': gini_coeff}) for result in curr_results]
-            [result.update({'VAF Ratio': vafs[-1]/vafs[0]}) for result in curr_results]
+            [result.update({'VAF Ratio': vafs[-1] / vafs[0]}) for result in curr_results]
             results.extend(curr_results)
         if plot:
             ax2[0].plot(original_position[:, 0, 0], color='k', ls='--', label='Unperturbed')
@@ -363,7 +431,6 @@ def main(gpu: int = 2):
     model.test_sensitivity()
     model.evaluate_network()
     model.plot_activity()
-
 
 
 if __name__ == '__main__':

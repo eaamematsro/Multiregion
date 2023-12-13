@@ -400,8 +400,9 @@ class SequentialReachingNetwork(MultiAreaNetwork):
             target_locations = np.linspace(0, max_bound, n_clusters)
             self.probs = np.zeros_like(vals)
             for target_location in target_locations:
-                self.probs += (1 / (np.sqrt(2 * np.pi * sigma ** 2)) *
-                               np.exp(-1 / 2 * ((vals - target_location) / sigma) ** 2) / n_clusters)
+                self.probs += (1 / (np.sqrt(2 * np.pi * sigma ** 2 + np.finfo('float').eps)) *
+                               np.exp(-1 / 2 * ((vals - target_location) / (sigma + np.finfo('float').eps))
+                                      ** 2) / n_clusters)
 
         self.probs /= self.probs.sum()
 
@@ -413,7 +414,7 @@ class SequentialReachingNetwork(MultiAreaNetwork):
                 targets.append(
                     np.random.choice(range(self.probs.shape[0]), p=self.probs, size=(self.reaches, 2)) / 100)
             else:
-                init_target = np.random.choice(range(self.probs.shape[0]), p=self.probs, size=2) / 100
+                init_target = np.random.choice(range(self.probs.shape[0]), p=self.probs, replace=False, size=2) / 100
                 target_array = np.zeros((self.reaches, 2))
                 target_array[0] = init_target
                 for reach in range(self.reaches - 1):
@@ -719,8 +720,8 @@ class SequentialReachingNetwork(MultiAreaNetwork):
                 if (loop % eval_freq) == 0:
                     logging.info(f"Iteration {loop}: Loss: {self.Loss[-1]}")
                     self.save_checkpoint(checkpoint=(loop // eval_freq))
-                    self.evaluate_network()
-                    self.plot_activity()
+                    # self.evaluate_network()
+                    # self.plot_activity()
 
     def reset_optimizer(self):
         if self.load_cnn:
