@@ -419,7 +419,7 @@ def main(gpu: int = 2):
         device = torch.device(f"cuda:{gpu}" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    samples = 10
+    samples = 15
     decay = np.logspace(-5, -3, samples, base=10)
     for sample, wd in zip(range(samples), decay):
         plt.close('all')
@@ -434,6 +434,6 @@ def main(gpu: int = 2):
 
 
 if __name__ == '__main__':
-    repeats = 5
+    repeats = 15
     for _ in range(repeats):
         main()

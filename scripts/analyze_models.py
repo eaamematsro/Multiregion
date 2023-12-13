@@ -169,13 +169,13 @@ sns.pointplot(df.loc[df['Type'] == 'Single Linear'], x='Preserved Region', y='VA
               ax=ax[0], dodge=True)
 
 plt.setp(ax[0].lines, linewidth=lw)
-
 sns.lineplot(df.loc[df['Type'] == 'Single Linear'], x='wd', y='VAF Ratio',
              ax=ax[1])
 sns.lineplot(df.loc[df['Type'] == 'Single Linear'], x='wd', y='gini',
              ax=ax[2])
 sns.lineplot(df.loc[df['Type'] == 'Single Linear'], x='wd', y='Final Loss',
              ax=ax[3])
+
 for axis in ax[1:]:
     axis.set_xscale('log')
 fig.tight_layout()
