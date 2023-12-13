@@ -159,7 +159,7 @@ plt_params = {'data': r_df, 'x': 'Regions Removed',
 
 g = sns.catplot(**plt_params, row='Type', kind='point')
 g.set(yscale='symlog', ylim=[-1e4, 1])
-lw =.75 # lw of first line
+lw = .75 # lw of first line
 for axis in g.axes.flatten():
     plt.setp(axis.lines, linewidth=lw)
 file_name = save_path / 'region_removal'
